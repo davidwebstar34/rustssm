@@ -3,9 +3,8 @@ use aws_sdk_ssooidc::Client as SsoOidcClient;
 use dirs_next;
 use skim::prelude::*;
 use std::error::Error;
-use std::fs::OpenOptions;
+use std::fs;
 use std::io::Cursor;
-use std::io::Write;
 use tokio::time::{sleep, Duration};
 use webbrowser;
 
@@ -14,43 +13,30 @@ fn write_default_aws_credentials(
     secret_access_key: &str,
     session_token: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Path to the credentials file
-    let credentials_path = dirs_next::home_dir()
+    dirs_next::home_dir()
         .map(|home| home.join(".aws/credentials"))
-        .ok_or("Could not locate home directory")?;
-
-    // Prepare the default section content
-    let default_section = format!(
-        "[default]\naws_access_key_id = {}\naws_secret_access_key = {}\naws_session_token = {}\n",
-        access_key_id, secret_access_key, session_token
-    );
-
-    // Write the content to the file, replacing any existing default section
-    std::fs::write(&credentials_path, default_section)?;
-
-    println!("Default credentials written to: {:?}", credentials_path);
-    Ok(())
-}
-
-fn write_default_aws_config(region: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Path to the config file
-    let config_path = dirs_next::home_dir()
-        .map(|home| home.join(".aws/config"))
-        .ok_or("Could not locate home directory")?;
-
-    // Prepare the default section content
-    let default_section = format!("[default]\nregion = {}\n", region);
-
-    // Open the file for appending or create it if it doesn't exist
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true) // Overwrite the file to ensure clean setup
-        .open(&config_path)?;
-
-    file.write_all(default_section.as_bytes())?;
-    println!("Default region written to: {:?}", config_path);
-    Ok(())
+        .ok_or_else(|| "Could not locate home directory".into())
+        .and_then(|credentials_path| {
+            credentials_path
+                .parent()
+                .map(fs::create_dir_all)
+                .transpose()
+                .map_err(|e| e.into())
+                .and_then(|_| {
+                    std::fs::write(
+                        &credentials_path,
+                        format!(
+                            "[default]\naws_access_key_id = {}\naws_secret_access_key = {}\naws_session_token = {}\n",
+                            access_key_id, secret_access_key, session_token
+                        ),
+                    )
+                    .map(|_| {
+                        println!("Default credentials written to: {:?}", credentials_path);
+                        ()
+                    })
+                    .map_err(|e| e.into())
+                })
+        })
 }
 
 #[tokio::main]
@@ -161,22 +147,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let accounts = accounts_resp.account_list(); // Directly get the slice
 
-    // for account in accounts {
-    //     if let Some(account_id) = account.account_id() {
-    //         println!("Account ID: {}", account_id);
-    //         // Fetch roles for the account
-    //         let roles_resp = sso_client
-    //             .list_account_roles()
-    //             .account_id(account_id)
-    //             .access_token(access_token)
-    //             .send()
-    //             .await?;
-    //         for role in roles_resp.role_list() {
-    //             println!(" - Role: {}", role.role_name().unwrap_or("Unknown"));
-    //         }
-    //     }
-    // }
-
     if accounts.is_empty() {
         println!("No accounts found.");
         return Ok(());
@@ -267,18 +237,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let secret_access_key = credentials.secret_access_key().unwrap_or("");
             let session_token = credentials.session_token().unwrap_or("");
 
-            // Output credentials (you might want to export these as environment variables or store them securely)
-            // println!("Access Key ID: {}", access_key_id);
-            // println!("Secret Access Key: {}", secret_access_key);
-            // println!("Session Token: {}", session_token);
-
-            // (Optional) Set environment variables to use these credentials immediately
-            // std::env::set_var("AWS_ACCESS_KEY_ID", access_key_id);
-            // std::env::set_var("AWS_SECRET_ACCESS_KEY", secret_access_key);
-            // std::env::set_var("AWS_SESSION_TOKEN", session_token);
             println!("Environment variables updated for the selected role.");
             write_default_aws_credentials(access_key_id, secret_access_key, session_token)?;
-            // write_default_aws_config("eu-west-1")?;
         } else {
             eprintln!(
                 "Failed to fetch credentials for Account ID: {}, Role: {}",
