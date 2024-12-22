@@ -11,3 +11,7 @@ aws-sdk-ssooidc = "1.5.10"
 webbrowser = "0.5.5"
 skim = "0.10.1"
 dirs-next = "2.0"
+
+[lib]
+name = "aws_sso"
+path = "src/lib.rs"
