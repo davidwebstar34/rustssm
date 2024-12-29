@@ -1,12 +1,14 @@
-use aws_sso::aws_sso::AwsSsoWorkflow;
+use cloud_sso::create_workflow;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    AwsSsoWorkflow::new(
-        "https://webstar34.awsapps.com/start".to_string(),
-        "eu-west-1".to_string(),
-    )
-    .run()
-    .await
-    .map_err(|e| e.into())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Specify the cloud provider ("aws" or "google")
+    let provider = "aws"; // Change this to "google" for GCP
+
+    // Create the workflow
+    let workflow = create_workflow(provider)?;
+
+    // Run the workflow
+    workflow.run()?;
+
+    Ok(())
 }
