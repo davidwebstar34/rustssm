@@ -13,5 +13,5 @@ skim = "0.10.1"
 dirs-next = "2.0"
 
 [lib]
-name = "cloud_sso"
+name = "aws_sso"
 path = "src/lib.rs"

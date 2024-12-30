@@ -8,22 +8,16 @@ use skim::prelude::*;
 use std::error::Error;
 use std::fs;
 use std::io::{Cursor, Write};
-use tokio::runtime::Runtime;
 use tokio::time::{sleep, Duration};
 use webbrowser;
+
+#[derive(Default, Clone)]
 pub struct AwsSsoWorkflow {
-    start_url: String,
-    region: String,
+    pub start_url: String,
+    pub region: String,
 }
 
 impl AwsSsoWorkflow {
-    pub fn new() -> Self {
-        Self {
-            start_url: String::new(),
-            region: String::new(),
-        }
-    }
-
     fn write_default_aws_credentials(
         access_key_id: &str,
         secret_access_key: &str,
@@ -48,7 +42,6 @@ impl AwsSsoWorkflow {
                             )
                             .map(|_| {
                                 println!("Default credentials written to: {:?}", credentials_path);
-                                ()
                             })
                             .map_err(|e| e.into())
                         })
@@ -68,10 +61,8 @@ impl AwsSsoWorkflow {
             .await
             .map_err(|e| Box::new(e) as Box<dyn Error>)
             .and_then(|response| {
-                let client_id = response.client_id().ok_or_else(|| "Missing client_id")?;
-                let client_secret = response
-                    .client_secret()
-                    .ok_or_else(|| "Missing client_secret")?;
+                let client_id = response.client_id().ok_or("Missing client_id")?;
+                let client_secret = response.client_secret().ok_or("Missing client_secret")?;
                 Ok((client_id.to_string(), client_secret.to_string()))
             })
     }
@@ -360,10 +351,7 @@ impl AwsSsoWorkflow {
 }
 
 impl crate::Workflow for AwsSsoWorkflow {
-    fn run(&self) -> Result<(), Box<dyn Error>> {
-        // Use a Tokio runtime to block on the async function
-        let rt = Runtime::new()?; // Create a new Tokio runtime
-        let mut workflow = Self::new();
-        rt.block_on(workflow.run_workflow())
+    fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        tokio::runtime::Handle::current().block_on(async { self.run_workflow().await })
     }
 }
