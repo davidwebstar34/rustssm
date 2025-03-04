@@ -1,39 +1,65 @@
-use clap::{Arg, Command};
+//! # rustssm
+//!
+//! A Rust-based AWS SSM session helper.
+//!
+//! This tool allows users to interactively select AWS EC2 instances that support
+//! AWS Systems Manager (SSM) and start secure sessions without needing SSH access.
+//!
+//! ## Features
+//! - Interactive instance selection via fuzzy finder (`skim`).
+//! - Secure SSM session handling (start/terminate).
+//! - AWS credential and region configuration.
 
-fn main() {
-    let matches = Command::new("rustssm")
-        .version(env!("CARGO_PKG_VERSION"))
-        .author("Your Name <your_email@example.com>")
-        .about("Executes AWS SSM commands with an interactive CLI")
-        .arg(
-            Arg::new("exec")
-                .short('e')
-                .long("exec")
-                .value_name("EXEC")
-                .help("[required] Execute command")
-                .required(true),
-        )
-        .arg(
-            Arg::new("target")
-                .short('t')
-                .long("target")
-                .value_name("TARGET")
-                .help("[optional] EC2 instanceId or name"),
-        )
-        .get_matches();
+mod aws_config;
+mod ec2;
+mod interactive;
+mod ssh;
+mod ssm;
 
-    // Retrieve the "exec" and "target" arguments
-    let exec_command = matches.get_one::<String>("exec").expect("required");
-    let target = matches.get_one::<String>("target");
+use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_ssm::Client as SsmClient;
+use std::error::Error;
+use tokio::runtime::Runtime;
 
-    // Print the received arguments (Placeholder for the actual logic)
-    println!("Executing command: {}", exec_command);
-    if let Some(t) = target {
-        println!("Target specified: {}", t);
-    } else {
-        println!("No target specified, using default logic.");
-    }
+fn main() -> Result<(), Box<dyn Error>> {
+    let runtime = Runtime::new()?;
+    runtime.block_on(async {
+        let region = "eu-west-1";
+        let aws_config = aws_config::configure_aws(Some(region.to_string())).await;
 
-    // Placeholder for executing the actual functionality
-    // Integrate AWS SDK and actual SSM functionality here.
+        // Create EC2 & SSM clients
+        let ec2_client = Ec2Client::new(&aws_config);
+        let ssm_client = SsmClient::new(&aws_config);
+
+        // Fetch list of EC2 instances with SSM enabled
+        println!("Fetching available EC2 instances...");
+        let instances = ec2::list_ec2_instances(&ec2_client).await?;
+
+        if instances.is_empty() {
+            println!("No EC2 instances found with running state.");
+            return Ok(());
+        }
+
+        // Allow user to select an instance interactively
+        let selected_instance = interactive::select_instance(&instances)?;
+
+        println!("Selected instance: {}", selected_instance);
+
+        // Start SSM session for the selected instance
+        let session_id = ssm::start_ssm_session(&ssm_client, &selected_instance).await?;
+        println!("SSM session started: {}", session_id);
+
+        // Generate SSH command (if needed for tunneling)
+        let ssh_command = ssh::generate_ssh_command("ec2-user", &selected_instance);
+        println!("Generated SSH command: {}", ssh_command);
+
+        // Execute SSH session (or just keep session open)
+        ssh::execute_ssh_command(&ssh_command)?;
+
+        // Once session is done, terminate it
+        ssm::terminate_ssm_session(&ssm_client, &session_id).await?;
+        println!("SSM session terminated: {}", session_id);
+
+        Ok(())
+    })
 }

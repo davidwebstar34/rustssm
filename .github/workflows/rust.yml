@@ -1,24 +1,80 @@
-name: Rust
+name: aws_sso_release
 
 on:
   push:
-    branches: [ "main", "sso" ]
-  pull_request:
-    branches: [ "main", "sso" ]
+    tags:
+      - "v*.*.*" # Runs only on version tags like v1.0.0
 
 env:
   CARGO_TERM_COLOR: always
+  REPO_NAME: ${{ github.event.repository.name }}
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run 
-      run: cargo run
-    # - name: Run tests
-    #   run: cargo test --verbose  
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Build Release Binary
+        run: cargo build --release --target=${{ matrix.target }}
+
+      - name: Rename Binary
+        run: mv target/${{ matrix.target }}/release/${{ env.REPO_NAME }} ${{ env.REPO_NAME }}-${{ matrix.target }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-${{ matrix.target }}
+          path: ./${{ env.REPO_NAME }}-${{ matrix.target }}
+          retention-days: 5
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Linux Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-x86_64-unknown-linux-gnu
+          path: .
+
+      - name: Download macOS Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-x86_64-apple-darwin
+          path: .
+
+      - name: Set Executable Permissions
+        run: chmod +x ${{ env.REPO_NAME }}-*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./${{ env.REPO_NAME }}-x86_64-unknown-linux-gnu
+            ./${{ env.REPO_NAME }}-x86_64-apple-darwin
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
