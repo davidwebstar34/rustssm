@@ -1,16 +1,49 @@
-name: aws_sso_release
+name: Rust CI/CD
 
 on:
   push:
+    branches: ["main"]
     tags:
-      - "v*.*.*" # Runs only on version tags like v1.0.0
+      - "v*.*.*"
 
 env:
   CARGO_TERM_COLOR: always
   REPO_NAME: ${{ github.event.repository.name }}
 
 jobs:
-  build:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust dependencies
+        run: rustup component add rustfmt clippy
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Test
+        run: cargo test
+
+      - name: Format Check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy Linter
+        run: cargo clippy -- -D warnings
+
+      - name: Check for Compilation Issues
+        run: cargo check
+
+      - name: Install and Run Security Audit
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+  build_release:
+    needs: build_and_test
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         include:
@@ -34,19 +67,23 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --target=${{ matrix.target }}
 
-      - name: Rename Binary
-        run: mv target/${{ matrix.target }}/release/${{ env.REPO_NAME }} ${{ env.REPO_NAME }}-${{ matrix.target }}
+      - name: Rename Binary with Version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mv target/${{ matrix.target }}/release/${{ env.REPO_NAME }} ${{ env.REPO_NAME }}-${VERSION}-${{ matrix.target }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-${{ matrix.target }}
-          path: ./${{ env.REPO_NAME }}-${{ matrix.target }}
+          name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
+          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
           retention-days: 5
 
   release:
-    needs: build
+    needs: build_release
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -54,13 +91,13 @@ jobs:
       - name: Download Linux Binary
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-x86_64-unknown-linux-gnu
+          name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-unknown-linux-gnu
           path: .
 
       - name: Download macOS Binary
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-x86_64-apple-darwin
+          name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-apple-darwin
           path: .
 
       - name: Set Executable Permissions
@@ -70,8 +107,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ./${{ env.REPO_NAME }}-x86_64-unknown-linux-gnu
-            ./${{ env.REPO_NAME }}-x86_64-apple-darwin
+            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-unknown-linux-gnu
+            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-apple-darwin
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
           draft: false
