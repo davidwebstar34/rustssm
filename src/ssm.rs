@@ -1,4 +1,5 @@
 use aws_sdk_ssm::Client as SsmClient;
+use std::process::Command;
 
 pub async fn start_ssm_session(
     client: &SsmClient,
@@ -21,5 +22,24 @@ pub async fn terminate_ssm_session(
         .session_id(session_id)
         .send()
         .await?;
+    Ok(())
+}
+
+pub fn execute_ssm_session(
+    instance_id: &str,
+    region: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ssm_command = format!(
+        "aws ssm start-session --target {} --region {}",
+        instance_id, region
+    );
+    println!("Executing: {}", ssm_command);
+
+    Command::new("sh")
+        .arg("-c")
+        .arg(&ssm_command)
+        .spawn()?
+        .wait()?;
+
     Ok(())
 }

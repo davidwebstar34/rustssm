@@ -17,7 +17,6 @@ pub fn select_instance(instances: &[String]) -> Result<String, Box<dyn std::erro
         .unwrap_or_default();
 
     if let Some(selected) = selected_items.first() {
-        // Unwrap Arc reference and call .output()
         Ok(selected.output().to_string())
     } else {
         Err("No instance selected".into())
