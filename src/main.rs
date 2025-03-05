@@ -13,7 +13,6 @@
 mod aws_config;
 mod ec2;
 mod interactive;
-mod ssh;
 mod ssm;
 
 use aws_sdk_ec2::Client as Ec2Client;
