@@ -2,6 +2,12 @@
 name = "rustssm"
 version = "0.1.0"
 edition = "2021"
+authors = ["David Webster <dwebster182@gmail.com>"]
+description = "A cli binary for interacting with session manager."
+license = "MIT"
+repository = "https://github.com/davidwebstar34/rustssm"
+homepage = "https://github.com/davidwebstar34/rustssm"
+keywords = ["aws", "ssm", "rust"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
