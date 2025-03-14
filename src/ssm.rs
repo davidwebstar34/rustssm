@@ -1,7 +1,8 @@
 use aws_sdk_ssm::Client as SsmClient;
+use serde_json::json;
 use std::error::Error;
 use std::fs;
-use std::process::{Command, Stdio}; // Use a generic error type
+use std::process::{Command, Stdio};
 
 pub async fn execute_ssm_session_with_plugin(
     client: &SsmClient,
@@ -22,7 +23,6 @@ pub async fn execute_ssm_session_with_plugin(
         .token_value()
         .ok_or("Failed to get token value from response")?;
 
-    // Invoke session-manager-plugin with exact arguments AWS CLI uses
     let status = Command::new("session-manager-plugin")
         .arg(session_metadata_json(
             &session_id,
@@ -82,13 +82,11 @@ pub async fn terminate_ssm_session(
 pub async fn send_ssh_key_via_ssm(
     client: &SsmClient,
     instance_id: &str,
-    ssh_public_key_path: &str, // Path to local public key
+    ssh_public_key_path: &str,
+    username: &str,
 ) -> Result<(), Box<dyn Error>> {
-    // Use Box<dyn Error> to handle multiple error types
-    // ✅ Read actual key content instead of passing the path
-    let ssh_public_key = fs::read_to_string(ssh_public_key_path)?.trim().to_string(); // Trim to remove extra newlines
+    let ssh_public_key = fs::read_to_string(ssh_public_key_path)?.trim().to_string();
 
-    // Idempotent command to ensure correct SSH key is added
     let command = format!(
         "sudo -u {1} bash -c 'mkdir -p /home/{1}/.ssh && chmod 700 /home/{1}/.ssh && \
         touch /home/{1}/.ssh/authorized_keys && chmod 600 /home/{1}/.ssh/authorized_keys && \
@@ -96,7 +94,6 @@ pub async fn send_ssh_key_via_ssm(
         ssh_public_key, username
     );
 
-    // Send command via AWS SSM
     client
         .send_command()
         .document_name("AWS-RunShellScript")
@@ -107,4 +104,68 @@ pub async fn send_ssh_key_via_ssm(
         .await?;
 
     Ok(())
+}
+
+pub async fn start_port_forwarding_ssm_session(
+    client: &SsmClient,
+    instance_id: &str,
+    region: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> Result<(), Box<dyn Error>> {
+    // Start an SSM session for port forwarding
+    let response = client
+        .start_session()
+        .target(instance_id)
+        .document_name("AWS-StartPortForwardingSession")
+        .parameters("portNumber", vec![remote_port.to_string()])
+        .parameters("localPortNumber", vec![local_port.to_string()])
+        .send()
+        .await?;
+
+    // Extract session details
+    let session_id = response.session_id().ok_or("Missing session ID")?;
+    let stream_url = response.stream_url().ok_or("Missing stream URL")?;
+    let token_value = response.token_value().ok_or("Failed to get token")?;
+
+    // Correct JSON structure for session-manager-plugin (must include Parameters!)
+    let session_metadata = json!({
+        "SessionId": session_id,
+        "StreamUrl": stream_url,
+        "TokenValue": token_value,
+    });
+
+    let parameters_json = json!({
+        "portNumber": [remote_port.to_string()],
+        "localPortNumber": [local_port.to_string()]
+    });
+
+    // Pass correct arguments to session-manager-plugin (6 arguments total)
+    let status = Command::new("session-manager-plugin")
+        .arg(session_metadata.to_string()) // Session metadata JSON
+        .arg(region)
+        .arg("StartSession") // <-- Must remain "StartSession"
+        .arg("") // empty for default AWS profile
+        .arg(
+            json!({                             // Additional argument: parameters JSON
+                "Target": instance_id,
+                "DocumentName": "AWS-StartPortForwardingSession",
+                "Parameters": parameters_json
+            })
+            .to_string(),
+        )
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+
+    if status.success() {
+        println!(
+            "Port forwarding established: connect via ssh -p {} username@localhost",
+            local_port
+        );
+        Ok(())
+    } else {
+        Err("session-manager-plugin failed to execute port forwarding session".into())
+    }
 }
