@@ -21,17 +21,15 @@ pub async fn start_ssm_session_with_document(
         .target(instance_id)
         .document_name(document_name);
 
-    if let Some(params) = parameters {
-        if let serde_json::Value::Object(map) = params {
-            for (key, val) in map.iter() {
-                let val_strs = val
-                    .as_array()
-                    .ok_or("Invalid parameter format")?
-                    .iter()
-                    .map(|v| v.as_str().unwrap_or_default().to_string())
-                    .collect::<Vec<String>>();
-                builder = builder.parameters(key, val_strs);
-            }
+    if let Some(serde_json::Value::Object(map)) = parameters {
+        for (key, val) in map.iter() {
+            let val_strs = val
+                .as_array()
+                .ok_or("Invalid parameter format")?
+                .iter()
+                .map(|v| v.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<String>>();
+            builder = builder.parameters(key, val_strs);
         }
     }
 
