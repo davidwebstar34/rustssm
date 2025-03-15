@@ -4,244 +4,178 @@ use std::error::Error;
 use std::fs;
 use std::process::{Command, Stdio};
 
-pub async fn execute_ssm_session_with_plugin(
-    client: &SsmClient,
-    instance_id: &str,
-    region: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let response = client.start_session().target(instance_id).send().await?;
-
-    let session_id = response
-        .session_id()
-        .ok_or("Failed to get session ID from response")?;
-
-    let stream_url = response
-        .stream_url()
-        .ok_or("Failed to get stream URL from response")?;
-
-    let token_value = response
-        .token_value()
-        .ok_or("Failed to get token value from response")?;
-
-    let status = Command::new("session-manager-plugin")
-        .arg(session_metadata_json(
-            &session_id,
-            &stream_url,
-            &token_value,
-        ))
-        .arg(region)
-        .arg("StartSession")
-        .arg("") // empty AWS profile means default
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-
-    if status.success() {
-        println!("Interactive session ended successfully.");
-        Ok(())
-    } else {
-        Err("session-manager-plugin failed to execute session".into())
-    }
+pub struct SessionInfo {
+    pub session_id: String,
+    pub stream_url: String,
+    pub token_value: String,
 }
 
-fn session_metadata_json(session_id: &str, stream_url: &str, token_value: &str) -> String {
-    serde_json::json!({
-        "SessionId": session_id,
-        "StreamUrl": stream_url,
-        "TokenValue": token_value,
+pub async fn start_ssm_session_with_document(
+    client: &SsmClient,
+    instance_id: &str,
+    document_name: &str,
+    parameters: Option<serde_json::Value>,
+) -> Result<SessionInfo, Box<dyn Error>> {
+    let mut builder = client
+        .start_session()
+        .target(instance_id)
+        .document_name(document_name);
+
+    if let Some(params) = parameters {
+        if let serde_json::Value::Object(map) = params {
+            for (key, val) in map.iter() {
+                let val_strs = val
+                    .as_array()
+                    .ok_or("Invalid parameter format")?
+                    .iter()
+                    .map(|v| v.as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<String>>();
+                builder = builder.parameters(key, val_strs);
+            }
+        }
+    }
+
+    let response = builder.send().await?;
+
+    Ok(SessionInfo {
+        session_id: response.session_id().unwrap().to_string(),
+        stream_url: response.stream_url().unwrap().to_string(),
+        token_value: response.token_value().unwrap().to_string(),
     })
-    .to_string()
 }
 
-pub async fn start_ssm_session(
-    client: &SsmClient,
-    instance_id: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let response = client.start_session().target(instance_id).send().await?;
-
-    if let Some(session_id) = response.session_id() {
-        Ok(session_id.to_string())
-    } else {
-        Err("Failed to start session".into())
-    }
-}
-
-pub async fn terminate_ssm_session(
-    client: &SsmClient,
-    session_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    client
-        .terminate_session()
-        .session_id(session_id)
-        .send()
-        .await?;
-    Ok(())
-}
-
-pub async fn send_ssh_key_via_ssm(
-    client: &SsmClient,
-    instance_id: &str,
-    ssh_public_key_path: &str,
-    username: &str,
-) -> Result<(), Box<dyn Error>> {
-    let ssh_public_key = fs::read_to_string(ssh_public_key_path)?.trim().to_string();
-
-    let command = format!(
-        "sudo -u {1} bash -c 'mkdir -p /home/{1}/.ssh && chmod 700 /home/{1}/.ssh && \
-        touch /home/{1}/.ssh/authorized_keys && chmod 600 /home/{1}/.ssh/authorized_keys && \
-        grep -qxF \"{0}\" /home/{1}/.ssh/authorized_keys || echo \"{0}\" >> /home/{1}/.ssh/authorized_keys'",
-        ssh_public_key, username
-    );
-
-    client
-        .send_command()
-        .document_name("AWS-RunShellScript")
-        .instance_ids(instance_id)
-        .parameters("commands", vec![command])
-        .comment("Append SSH public key to authorized_keys")
-        .send()
-        .await?;
-
-    Ok(())
-}
-
-pub async fn start_port_forwarding_ssm_session(
-    client: &SsmClient,
-    instance_id: &str,
+pub fn run_session_manager_plugin(
+    session_info: &SessionInfo,
     region: &str,
-    local_port: u16,
-    remote_port: u16,
+    document_name: &str,
+    target: &str,
+    parameters: Option<serde_json::Value>,
 ) -> Result<(), Box<dyn Error>> {
-    // Start an SSM session for port forwarding
-    let response = client
-        .start_session()
-        .target(instance_id)
-        .document_name("AWS-StartPortForwardingSession")
-        .parameters("portNumber", vec![remote_port.to_string()])
-        .parameters("localPortNumber", vec![local_port.to_string()])
-        .send()
-        .await?;
-
-    // Extract session details
-    let session_id = response.session_id().ok_or("Missing session ID")?;
-    let stream_url = response.stream_url().ok_or("Missing stream URL")?;
-    let token_value = response.token_value().ok_or("Failed to get token")?;
-
-    // Correct JSON structure for session-manager-plugin (must include Parameters!)
     let session_metadata = json!({
-        "SessionId": session_id,
-        "StreamUrl": stream_url,
-        "TokenValue": token_value,
+        "SessionId": session_info.session_id,
+        "StreamUrl": session_info.stream_url,
+        "TokenValue": session_info.token_value,
     });
 
-    let parameters_json = json!({
-        "portNumber": [remote_port.to_string()],
-        "localPortNumber": [local_port.to_string()]
-    });
-
-    // Pass correct arguments to session-manager-plugin (6 arguments total)
-    let status = Command::new("session-manager-plugin")
-        .arg(session_metadata.to_string()) // Session metadata JSON
-        .arg(region)
-        .arg("StartSession") // <-- Must remain "StartSession"
-        .arg("") // empty for default AWS profile
-        .arg(
-            json!({                             // Additional argument: parameters JSON
-                "Target": instance_id,
-                "DocumentName": "AWS-StartPortForwardingSession",
-                "Parameters": parameters_json
-            })
-            .to_string(),
-        )
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-
-    if status.success() {
-        println!(
-            "Port forwarding established: connect via ssh -p {} username@localhost",
-            local_port
-        );
-        Ok(())
-    } else {
-        Err("session-manager-plugin failed to execute port forwarding session".into())
-    }
-}
-
-pub async fn start_jupyter_via_ssm(
-    client: &SsmClient,
-    instance_id: &str,
-    region: &str,
-    local_port: u16,
-    remote_port: u16,
-    username: &str,
-) -> Result<(), Box<dyn Error>> {
-    // 1. Send command to start Jupyter Notebook remotely
-    let jupyter_command = format!(
-        "sudo -u {0} bash -c 'nohup jupyter notebook --no-browser --ip=0.0.0.0 --port={1} > /home/{0}/jupyter.log 2>&1 &'",
-        username, remote_port
-    );
-
-    client
-        .send_command()
-        .document_name("AWS-RunShellScript")
-        .instance_ids(instance_id)
-        .parameters("commands", vec![jupyter_command])
-        .comment("Start Jupyter Notebook remotely")
-        .send()
-        .await?;
-
-    println!(
-        "✅ Jupyter notebook started remotely on port {}",
-        remote_port
-    );
-
-    // 2. Establish port forwarding session
-    let response = client
-        .start_session()
-        .target(instance_id)
-        .document_name("AWS-StartPortForwardingSession")
-        .parameters("portNumber", vec![remote_port.to_string()])
-        .parameters("localPortNumber", vec![local_port.to_string()])
-        .send()
-        .await?;
-
-    let session_metadata = json!({
-        "SessionId": response.session_id().unwrap(),
-        "StreamUrl": response.stream_url().unwrap(),
-        "TokenValue": response.token_value().unwrap(),
-    });
-
-    let parameters_json = json!({
-        "portNumber": [remote_port.to_string()],
-        "localPortNumber": [local_port.to_string()]
+    let additional_args = json!({
+        "Target": target,
+        "DocumentName": document_name,
+        "Parameters": parameters.unwrap_or(json!({}))
     });
 
     let status = Command::new("session-manager-plugin")
         .arg(session_metadata.to_string())
         .arg(region)
         .arg("StartSession")
-        .arg("")
-        .arg(
-            json!({
-                "Target": instance_id,
-                "DocumentName": "AWS-StartPortForwardingSession",
-                "Parameters": parameters_json
-            })
-            .to_string(),
-        )
+        .arg("") // default profile
+        .arg(additional_args.to_string())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?;
 
     if status.success() {
-        println!("🚀 Port forwarding established. Access your notebook at:");
-        println!("🌐 http://localhost:{}", local_port);
         Ok(())
     } else {
-        Err("Port forwarding session failed".into())
+        Err("session-manager-plugin execution failed".into())
     }
+}
+
+pub async fn run_ssm_command(
+    client: &SsmClient,
+    instance_id: &str,
+    commands: Vec<String>,
+    comment: &str,
+) -> Result<(), Box<dyn Error>> {
+    client
+        .send_command()
+        .document_name("AWS-RunShellScript")
+        .instance_ids(instance_id)
+        .parameters("commands", commands)
+        .comment(comment)
+        .send()
+        .await?;
+    Ok(())
+}
+
+pub async fn copy_ssh_key(
+    client: &SsmClient,
+    instance_id: &str,
+    username: &str,
+    ssh_key_path: &str,
+) -> Result<(), Box<dyn Error>> {
+    let ssh_public_key = fs::read_to_string(ssh_key_path)?.trim().to_string();
+
+    let command = format!(
+        "sudo -u {0} bash -c 'mkdir -p /home/{0}/.ssh && chmod 700 /home/{0}/.ssh && \
+         touch /home/{0}/.ssh/authorized_keys && chmod 600 /home/{0}/.ssh/authorized_keys && \
+         grep -qxF \"{1}\" /home/{0}/.ssh/authorized_keys || echo \"{1}\" >> /home/{0}/.ssh/authorized_keys'",
+        username, ssh_public_key
+    );
+
+    run_ssm_command(client, instance_id, vec![command], "Append SSH public key").await
+}
+
+pub async fn connect_interactive_session(
+    client: &SsmClient,
+    instance_id: &str,
+    region: &str,
+) -> Result<(), Box<dyn Error>> {
+    let session_info =
+        start_ssm_session_with_document(client, instance_id, "AWS-StartInteractiveCommand", None)
+            .await?;
+    run_session_manager_plugin(
+        &session_info,
+        region,
+        "AWS-StartInteractiveCommand",
+        instance_id,
+        None,
+    )
+}
+
+pub async fn establish_tunnel(
+    client: &SsmClient,
+    instance_id: &str,
+    region: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> Result<(), Box<dyn Error>> {
+    let parameters = json!({
+        "portNumber": [remote_port.to_string()],
+        "localPortNumber": [local_port.to_string()]
+    });
+
+    let session_info = start_ssm_session_with_document(
+        client,
+        instance_id,
+        "AWS-StartPortForwardingSession",
+        Some(parameters.clone()),
+    )
+    .await?;
+
+    run_session_manager_plugin(
+        &session_info,
+        region,
+        "AWS-StartPortForwardingSession",
+        instance_id,
+        Some(parameters),
+    )
+}
+
+pub async fn start_jupyter_notebook(
+    client: &SsmClient,
+    instance_id: &str,
+    region: &str,
+    username: &str,
+    local_port: u16,
+    remote_port: u16,
+) -> Result<(), Box<dyn Error>> {
+    run_ssm_command(
+        client,
+        instance_id,
+        vec![format!("sudo -u {} nohup jupyter notebook --no-browser --ip=0.0.0.0 --port={} > ~/jupyter.log 2>&1 &", username, remote_port)],
+        "Start Jupyter Notebook"
+    ).await?;
+
+    establish_tunnel(client, instance_id, region, local_port, remote_port).await
 }
