@@ -41,6 +41,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await?;
 
+    ssm::start_jupyter_via_ssm(
+        &ssm_client,
+        &selected_instance,
+        "eu-west-1",
+        8888,     // local port
+        8888,     // remote port (Jupyter's default port)
+        "ubuntu", // username on the remote EC2 instance
+    )
+    .await?;
+
     let session_id = ssm::start_ssm_session(&ssm_client, &selected_instance).await?;
 
     ssm::execute_ssm_session_with_plugin(&ssm_client, &selected_instance, region).await?;
@@ -51,5 +61,4 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 // TODO:
-// Add starting a jupyter notebook server on the EC2 instance using SSM or any kind of document
 // Add clap to cater for command line arguments

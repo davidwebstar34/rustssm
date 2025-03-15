@@ -169,3 +169,79 @@ pub async fn start_port_forwarding_ssm_session(
         Err("session-manager-plugin failed to execute port forwarding session".into())
     }
 }
+
+pub async fn start_jupyter_via_ssm(
+    client: &SsmClient,
+    instance_id: &str,
+    region: &str,
+    local_port: u16,
+    remote_port: u16,
+    username: &str,
+) -> Result<(), Box<dyn Error>> {
+    // 1. Send command to start Jupyter Notebook remotely
+    let jupyter_command = format!(
+        "sudo -u {0} bash -c 'nohup jupyter notebook --no-browser --ip=0.0.0.0 --port={1} > /home/{0}/jupyter.log 2>&1 &'",
+        username, remote_port
+    );
+
+    client
+        .send_command()
+        .document_name("AWS-RunShellScript")
+        .instance_ids(instance_id)
+        .parameters("commands", vec![jupyter_command])
+        .comment("Start Jupyter Notebook remotely")
+        .send()
+        .await?;
+
+    println!(
+        "✅ Jupyter notebook started remotely on port {}",
+        remote_port
+    );
+
+    // 2. Establish port forwarding session
+    let response = client
+        .start_session()
+        .target(instance_id)
+        .document_name("AWS-StartPortForwardingSession")
+        .parameters("portNumber", vec![remote_port.to_string()])
+        .parameters("localPortNumber", vec![local_port.to_string()])
+        .send()
+        .await?;
+
+    let session_metadata = json!({
+        "SessionId": response.session_id().unwrap(),
+        "StreamUrl": response.stream_url().unwrap(),
+        "TokenValue": response.token_value().unwrap(),
+    });
+
+    let parameters_json = json!({
+        "portNumber": [remote_port.to_string()],
+        "localPortNumber": [local_port.to_string()]
+    });
+
+    let status = Command::new("session-manager-plugin")
+        .arg(session_metadata.to_string())
+        .arg(region)
+        .arg("StartSession")
+        .arg("")
+        .arg(
+            json!({
+                "Target": instance_id,
+                "DocumentName": "AWS-StartPortForwardingSession",
+                "Parameters": parameters_json
+            })
+            .to_string(),
+        )
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+
+    if status.success() {
+        println!("🚀 Port forwarding established. Access your notebook at:");
+        println!("🌐 http://localhost:{}", local_port);
+        Ok(())
+    } else {
+        Err("Port forwarding session failed".into())
+    }
+}

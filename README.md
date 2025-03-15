@@ -72,5 +72,5 @@ rustssm
 Then, in another terminal:
 
 ```sh
-ssh -i ~/.ssh/id_rsa -p 2222 ubuntu@localhost
+ssh -i ~/.ssh/id_rsa -p 2222 ssm-user@localhost
 ```
