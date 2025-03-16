@@ -7,7 +7,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write      
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -54,6 +54,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -71,15 +75,21 @@ jobs:
         run: cargo build --release --target=${{ matrix.target }}
 
       - name: Rename Binary with Version
+        shell: bash
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          mv target/${{ matrix.target }}/release/${{ env.REPO_NAME }} ${{ env.REPO_NAME }}-${VERSION}-${{ matrix.target }}
+          BINARY_NAME=${{ env.REPO_NAME }}
+          EXT=""
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            EXT=".exe"
+          fi
+          mv target/${{ matrix.target }}/release/${BINARY_NAME}${EXT} ${BINARY_NAME}-${VERSION}-${{ matrix.target }}${EXT}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
-          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
+          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}*
           retention-days: 5
 
   release:
@@ -91,27 +101,20 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download Linux Binary
+      - name: Download All Binaries
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-unknown-linux-gnu
-          path: .
-
-      - name: Download macOS Binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-apple-darwin
-          path: .
+          path: ./release-assets
 
       - name: Set Executable Permissions
-        run: chmod +x ${{ env.REPO_NAME }}-*
+        run: chmod +x ./release-assets/*/* || true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-unknown-linux-gnu
-            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-apple-darwin
+            release-assets/**/*.exe
+            release-assets/**/${{ env.REPO_NAME }}-*
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
           draft: false
