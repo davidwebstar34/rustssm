@@ -56,29 +56,42 @@ jobs:
           override: true
           target: ${{ matrix.target }}
           components: rustfmt, clippy
+      # For macOS ARM specifically
+      - name: Install aarch64 dependencies (macOS)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: rustup target add aarch64-apple-darwin
       - name: Build Release Binary
         run: cargo build --release --target=${{ matrix.target }}
-      - name: Rename Binary (Unix)
-        if: runner.os != 'Windows'
-        run: mv target/${{ matrix.target }}/release/${{ env.REPO_NAME }} ${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
-      - name: Rename Binary (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
+      - name: Debug - Check Binary Path
+        shell: bash
         run: |
-          Move-Item "target/${{ matrix.target }}/release/${{ env.REPO_NAME }}.exe" "./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.exe"
-      - name: Upload Artifact (Unix)
+          echo "Checking binary path:"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            ls -la target/${{ matrix.target }}/release/
+          else
+            ls -la target/${{ matrix.target }}/release/
+          fi
+      - name: Create Artifact Directory
+        run: mkdir -p artifacts
+      - name: Copy Binary (Unix)
         if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-${{ matrix.target }}
-          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
-          retention-days: 5
-      - name: Upload Artifact (Windows)
+        run: |
+          cp target/${{ matrix.target }}/release/${{ env.REPO_NAME }} artifacts/${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
+      - name: Copy Binary (Windows)
         if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/${{ env.REPO_NAME }}.exe artifacts/${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.exe
+      - name: Check Artifacts Directory
+        shell: bash
+        run: |
+          echo "Files in artifacts directory:"
+          ls -la artifacts/
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-${{ matrix.target }}.exe
-          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.exe
+          name: binary-${{ matrix.target }}
+          path: artifacts/
           retention-days: 5
   release:
     needs: build_release
@@ -87,40 +100,28 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Download Linux Binary
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-x86_64-unknown-linux-gnu
-          path: .
-      - name: Download macOS (Intel) Binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-x86_64-apple-darwin
-          path: .
-      - name: Download macOS (Apple Silicon) Binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-aarch64-apple-darwin
-          path: .
-      - name: Download Windows Binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.REPO_NAME }}-x86_64-pc-windows-msvc.exe
-          path: .
-      - name: Set Executable Permissions
-        run: chmod +x ${{ env.REPO_NAME }}-*-*-* || true
-      - name: Debug - List Files
+          path: ./release-assets
+      - name: Debug - List All Files
         run: |
-          echo "Files in current directory:"
-          ls -la
+          echo "Files in release-assets directory:"
+          find ./release-assets -type f | sort
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release-files
+          cp release-assets/binary-x86_64-unknown-linux-gnu/* release-files/ || echo "Missing Linux binary"
+          cp release-assets/binary-x86_64-apple-darwin/* release-files/ || echo "Missing macOS Intel binary"
+          cp release-assets/binary-aarch64-apple-darwin/* release-files/ || echo "Missing macOS ARM binary"
+          cp release-assets/binary-x86_64-pc-windows-msvc/* release-files/ || echo "Missing Windows binary"
+          chmod +x release-files/* || true
+          echo "Files in release-files directory:"
+          ls -la release-files/
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-unknown-linux-gnu
-            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-apple-darwin
-            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-aarch64-apple-darwin
-            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe
+          files: ./release-files/*
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
           draft: false
