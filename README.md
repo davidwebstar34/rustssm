@@ -25,7 +25,7 @@ Download the latest binary for your OS using `curl`:
 **macOS**
 
 ```sh
-curl -L -o rustssm https://github.com/yourusername/rustssm/releases/latest/download/rustssm-x86_64-apple-darwin
+curl -L -o rustssm https://github.com/davidwebstar34/rustssm/releases/latest/download/rustssm-x86_64-apple-darwin
 chmod +x rustssm
 sudo mv rustssm /usr/local/bin/
 xattr -d com.apple.quarantine /usr/local/bin/rustssm
@@ -34,7 +34,7 @@ xattr -d com.apple.quarantine /usr/local/bin/rustssm
 **Linux**
 
 ```sh
-curl -L -o rustssm https://github.com/yourusername/rustssm/releases/latest/download/rustssm-x86_64-unknown-linux-gnu
+curl -L -o rustssm https://github.com/davidwebstar34/rustssm/releases/latest/download/rustssm-x86_64-unknown-linux-gnu
 chmod +x rustssm
 sudo mv rustssm /usr/local/bin/
 ```
