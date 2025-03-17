@@ -89,7 +89,7 @@ jobs:
           retention-days: 5
 
   release:
-    needs: build
+    needs: build_release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
