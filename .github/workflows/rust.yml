@@ -1,49 +1,36 @@
 name: Rust CI/CD
-
 on:
   push:
     branches: ["main"]
     tags:
       - "v*.*.*"
-
 permissions:
   contents: write
-
 env:
   CARGO_TERM_COLOR: always
   REPO_NAME: ${{ github.event.repository.name }}
-
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Install Rust dependencies
         run: rustup component add rustfmt clippy
-
       - name: Build
         run: cargo build --verbose
-
       - name: Test
         run: cargo test
-
       - name: Format Check
         run: cargo fmt --all -- --check
-
       - name: Clippy Linter
         run: cargo clippy -- -D warnings
-
       - name: Check for Compilation Issues
         run: cargo check
-
       - name: Install and Run Security Audit
         run: |
           cargo install cargo-audit
           cargo audit
-
   build_release:
     needs: build_and_test
     if: startsWith(github.ref, 'refs/tags/v')
@@ -59,65 +46,85 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Set Up Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
           target: ${{ matrix.target }}
-
+          components: rustfmt, clippy
       - name: Build Release Binary
         run: cargo build --release --target=${{ matrix.target }}
-
-      - name: Rename Binary with Version
-        shell: bash
+      - name: Rename Binary (Unix)
+        if: runner.os != 'Windows'
+        run: mv target/${{ matrix.target }}/release/${{ env.REPO_NAME }} ${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
+      - name: Rename Binary (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          BINARY_NAME=${{ env.REPO_NAME }}
-          EXT=""
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            EXT=".exe"
-          fi
-          mv target/${{ matrix.target }}/release/${BINARY_NAME}${EXT} ${BINARY_NAME}-${VERSION}-${{ matrix.target }}${EXT}
-
-      - name: Upload Artifact
+          Move-Item "target/${{ matrix.target }}/release/${{ env.REPO_NAME }}.exe" "./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.exe"
+      - name: Upload Artifact (Unix)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
-          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}*
+          name: ${{ env.REPO_NAME }}-${{ matrix.target }}
+          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}
           retention-days: 5
-
+      - name: Upload Artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-${{ matrix.target }}.exe
+          path: ./${{ env.REPO_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.exe
+          retention-days: 5
   release:
     needs: build_release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Download All Binaries
+      - name: Download Linux Binary
         uses: actions/download-artifact@v4
         with:
-          path: ./release-assets
-
+          name: ${{ env.REPO_NAME }}-x86_64-unknown-linux-gnu
+          path: .
+      - name: Download macOS (Intel) Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-x86_64-apple-darwin
+          path: .
+      - name: Download macOS (Apple Silicon) Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-aarch64-apple-darwin
+          path: .
+      - name: Download Windows Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-x86_64-pc-windows-msvc.exe
+          path: .
       - name: Set Executable Permissions
-        run: chmod +x ./release-assets/*/* || true
-
+        run: chmod +x ${{ env.REPO_NAME }}-*-*-* || true
+      - name: Debug - List Files
+        run: |
+          echo "Files in current directory:"
+          ls -la
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release-assets/**/*.exe
-            release-assets/**/${{ env.REPO_NAME }}-*
+            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-unknown-linux-gnu
+            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-apple-darwin
+            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-aarch64-apple-darwin
+            ./${{ env.REPO_NAME }}-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe
           tag_name: ${{ github.ref_name }}
           name: "Release ${{ github.ref_name }}"
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
