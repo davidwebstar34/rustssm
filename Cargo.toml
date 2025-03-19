@@ -1,6 +1,6 @@
 [package]
 name = "rustssm"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["David Webster <dwebster182@gmail.com>"]
 description = "A cli binary for interacting with session manager."
