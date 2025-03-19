@@ -122,9 +122,13 @@ pub async fn connect_interactive_session(
     let params = Some(serde_json::json!({
         "command": ["bash"]
     }));
-    let session_info =
-        start_ssm_session_with_document(client, instance_id, "AWS-StartInteractiveCommand", params.clone())
-            .await?;
+    let session_info = start_ssm_session_with_document(
+        client,
+        instance_id,
+        "AWS-StartInteractiveCommand",
+        params.clone(),
+    )
+    .await?;
     run_session_manager_plugin(
         &session_info,
         region,
