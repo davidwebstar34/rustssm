@@ -102,7 +102,8 @@ pub async fn copy_ssh_key(
     username: &str,
     ssh_key_path: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let ssh_public_key = fs::read_to_string(ssh_key_path)?.trim().to_string();
+    let expanded_path = shellexpand::tilde(ssh_key_path);
+    let ssh_public_key = fs::read_to_string(expanded_path.as_ref())?.trim().to_string();
 
     let command = format!(
         "sudo -u {0} bash -c 'mkdir -p /home/{0}/.ssh && chmod 700 /home/{0}/.ssh && \
