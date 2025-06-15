@@ -66,8 +66,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ssm::copy_ssh_key(
                 &ssm_client,
                 &selected_instance,
-                &cli.ssh_key_path,
                 &cli.username,
+                &cli.ssh_key_path,
             )
             .await?
         }

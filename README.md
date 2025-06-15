@@ -68,7 +68,7 @@ rustssm connect
 **Copy SSH Key**
 
 ```sh
-rustssm copy-key --ssh-key-path ~/.ssh/id_rsa.pub --username ssm-user
+rustssm --ssh-key-path ~/.ssh/id_rsa.pub --username ssm-user copy-key
 ```
 
 - Copies your local SSH public key to the remote EC2 instance.
